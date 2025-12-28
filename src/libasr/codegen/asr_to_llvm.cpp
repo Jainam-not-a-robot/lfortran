@@ -8300,7 +8300,14 @@ public:
             
             tmp = llvm_utils->CreateLoad2(data_type->getPointerTo(), arr_descr->get_pointer_to_data(m_arg, m_type, arg, module.get()));
             tmp = llvm_utils->create_ptr_gep2(data_type, tmp, arr_descr->get_offset(arr_type, arg));
-        } else {
+        } 
+        else if(
+            m_new == ASR::array_physical_typeType::UnboundedPointerArray &&
+            m_old == ASR::array_physical_typeType::PointerArray
+        ){
+        }
+        else {
+            std::cout<<"m_old: "<<m_old<<"m_new: "<<m_new<<std::endl;
             LCOMPILERS_ASSERT(false);
         }
     }
