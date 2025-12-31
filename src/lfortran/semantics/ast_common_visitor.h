@@ -10342,143 +10342,86 @@ public:
 
     void visit_ImpliedDoLoop(const AST::ImpliedDoLoop_t& x) {
         idl_nesting_level++;
+
+        std::string loop_var_name = to_lower(x.m_var);
+
+        ASR::symbol_t* a_sym = current_scope->resolve_symbol(loop_var_name);
+
+        if (!a_sym) {
+            ASR::ttype_t* int_type = ASRUtils::TYPE(
+                ASR::make_Integer_t(
+                    al, x.base.base.loc,
+                    compiler_options.po.default_integer_kind
+                )
+            );
+
+            a_sym = ASR::down_cast<ASR::symbol_t>(
+                ASRUtils::make_Variable_t_util(
+                    al,
+                    x.base.base.loc,
+                    current_scope,
+                    s2c(al, loop_var_name),
+                    nullptr, 0,
+                    ASR::intentType::Local,
+                    nullptr,
+                    nullptr,
+                    ASR::storage_typeType::Default,
+                    int_type,
+                    nullptr,
+                    ASR::abiType::Source,
+                    ASR::accessType::Private,
+                    ASR::presenceType::Required,
+                    false, false, false
+                )
+            );
+
+            current_scope->add_symbol(loop_var_name, a_sym);
+        }
+
+        ASR::expr_t* a_var =
+            ASRUtils::EXPR(ASR::make_Var_t(al, x.base.base.loc, a_sym));
+
         Vec<ASR::expr_t*> a_values_vec;
-        ASR::expr_t *a_start, *a_end, *a_increment;
-        a_start = a_end = a_increment = nullptr;
         a_values_vec.reserve(al, x.n_values);
+
         ASR::ttype_t* type = nullptr;
-        Vec<ASR::ttype_t*> type_tuple;
-        type_tuple.reserve(al, 1);
-        bool unique_type = true;
-        for( size_t i = 0; i < x.n_values; i++ ) {
-            this->visit_expr(*(x.m_values[i]));
-            ASR::expr_t *expr = ASRUtils::EXPR(tmp);
-            ASR::ttype_t* type_ = ASRUtils::type_get_past_allocatable(
-                ASRUtils::expr_type(expr));
-            if( type == nullptr ) {
-                type = type_;
-            } else {
-                if (!unique_type || !ASRUtils::types_equal(type_, type, expr, expr)) {
-                    unique_type = false;
-                }
+
+        for (size_t i = 0; i < x.n_values; i++) {
+            this->visit_expr(*x.m_values[i]);
+            ASR::expr_t* expr = ASRUtils::EXPR(tmp);
+
+            ASR::ttype_t* t =
+                ASRUtils::type_get_past_allocatable(
+                    ASRUtils::expr_type(expr));
+
+            if (!type) {
+                type = t;
             }
-            type_tuple.push_back(al, type_);
 
             a_values_vec.push_back(al, expr);
         }
-        this->visit_expr(*(x.m_start));
-        a_start = ASRUtils::EXPR(tmp);
-        this->visit_expr(*(x.m_end));
-        a_end = ASRUtils::EXPR(tmp);
-        if( x.m_increment != nullptr ) {
-            this->visit_expr(*(x.m_increment));
+        this->visit_expr(*x.m_start);
+        ASR::expr_t* a_start = ASRUtils::EXPR(tmp);
+
+        this->visit_expr(*x.m_end);
+        ASR::expr_t* a_end = ASRUtils::EXPR(tmp);
+
+        ASR::expr_t* a_increment = nullptr;
+        if (x.m_increment) {
+            this->visit_expr(*x.m_increment);
             a_increment = ASRUtils::EXPR(tmp);
         }
-        ASR::expr_t** a_values = a_values_vec.p;
-        size_t n_values = a_values_vec.size();
+        tmp = ASR::make_ImpliedDoLoop_t(
+            al, x.base.base.loc,
+            a_values_vec.p, a_values_vec.size(),
+            a_var,
+            a_start,
+            a_end,
+            a_increment,
+            type,
+            nullptr
+        );
 
-        ASR::symbol_t* a_sym = current_scope->resolve_symbol(to_lower(x.m_var));
-        if (a_sym == nullptr) {
-            diag.add(Diagnostic("The implied do loop variable '" +
-                to_lower(x.m_var) + "' is not declared",
-                Level::Error, Stage::Semantic, {Label("", {x.base.base.loc})}));
-            throw SemanticAbort();
-        }
-        ASR::expr_t* a_var = ASRUtils::EXPR(ASR::make_Var_t(al, x.base.base.loc, a_sym));
-        if( !unique_type ) {
-            type = ASRUtils::TYPE(ASR::make_Tuple_t(al, x.base.base.loc, type_tuple.p, type_tuple.size()));
-        }
-        tmp = ASR::make_ImpliedDoLoop_t(al, x.base.base.loc, a_values, n_values,
-                                        a_var, a_start, a_end, a_increment,
-                                        type, nullptr);
-        ASR::ImpliedDoLoop_t* idl = (ASR::ImpliedDoLoop_t*) tmp;
-
-        // fetch loop variables
-        std::vector<ASR::symbol_t*> loop_vars; fetch_implied_do_loop_variables(idl, loop_vars);
-        if (is_body_visitor) {
-            idl_nesting_level--;
-            return;
-        }
-        // check compiletime evaluation possibility
-        bool is_compiletime = is_compiletime_implied_do_loop(idl, loop_vars);
-
-        if (is_compiletime && idl_nesting_level == 1) {
-            std::vector<int> loop_indices; // fill it with all zero
-            for (size_t i = 0; i < loop_vars.size(); i++) {
-                loop_indices.push_back(0);
-            }
-
-            void *data = nullptr;
-            int itr = 0, curr_nesting_level = 0;
-            // TODO: handle multiple types
-            // populate compiletime array
-            if (ASRUtils::is_integer(*type)) {
-                Vec<int> array; array.reserve(al, 1);
-                populate_compiletime_array_for_idl(idl, array, loop_vars, loop_indices, curr_nesting_level, itr);
-                data = &array.p[0];
-            } else if (ASRUtils::is_logical(*type)) {
-                Vec<bool> array; array.reserve(al, 1);
-                populate_compiletime_array_for_idl(idl, array, loop_vars, loop_indices, curr_nesting_level, itr);
-                data = &array.p[0];
-            } else if (ASRUtils::is_real(*type)) {
-                int kind = ASRUtils::extract_kind_from_ttype_t(type);
-
-                if (kind == 4) {
-                    Vec<float> array; array.reserve(al, 1);
-                    populate_compiletime_array_for_idl(idl, array, loop_vars, loop_indices, curr_nesting_level, itr);
-                    data = &array.p[0];
-                } else if (kind == 8) {
-                    Vec<double> array; array.reserve(al, 1);
-                    populate_compiletime_array_for_idl(idl, array, loop_vars, loop_indices, curr_nesting_level, itr);
-                    data = &array.p[0];
-                } else {
-                    diag.add(Diagnostic("Unsupported kind for real type in compiletime evaluation of implied do loop",
-                                        Level::Error, Stage::Semantic, {Label("", {x.base.base.loc})}));
-                    throw SemanticAbort();
-                }
-            }
-            // Add Support for Character Type in Implied Do Loop
-            else if (ASRUtils::is_character(*type)){
-                Vec<char*> array; array.reserve(al, 1);
-                populate_compiletime_array_for_idl(idl, array, loop_vars, loop_indices, curr_nesting_level, itr);
-                //Get length of Do-Loop Character Type
-                int len = -1;
-                ASRUtils::extract_value(
-                    ASR::down_cast<ASR::String_t>(ASRUtils::extract_type(type))->m_len, len);
-                char* char_data = new char[len * itr + 1];
-                for (int i = 0; i < itr; i++) {
-                    for (int j = 0; j < len; j++) {
-                        char_data[i*len + j] = array.p[i][j];
-                    }
-                }
-                char_data[len * itr] = '\0';
-                data = (void*) char_data;
-            }
-            if (data != nullptr) {
-                Vec<ASR::dimension_t> dims; dims.reserve(al, 1);
-                ASR::dimension_t dim; dim.loc = x.base.base.loc;
-                dim.m_start = ASRUtils::EXPR(ASR::make_IntegerConstant_t(al, x.base.base.loc, 1, ASRUtils::TYPE(ASR::make_Integer_t(al, x.base.base.loc, 4))));
-                dim.m_length = ASRUtils::EXPR(ASR::make_IntegerConstant_t(al, x.base.base.loc, itr, ASRUtils::TYPE(ASR::make_Integer_t(al, x.base.base.loc, 4))));
-                dims.push_back(al, dim);
-                ASR::array_physical_typeType physical_type = ASR::array_physical_typeType::FixedSizeArray;
-                if (ASRUtils::is_character(*type)) {
-                    physical_type = ASR::array_physical_typeType::PointerArray;
-                }
-                ASR::ttype_t* array_type = ASRUtils::TYPE(ASR::make_Array_t(al, x.base.base.loc, type, dims.p, dims.n, physical_type));
-                int64_t n_data = itr * ASRUtils::extract_kind_from_ttype_t(type);
-                if (ASRUtils::is_character(*type)) {
-                    int len;
-                    if(!ASRUtils::extract_value(ASR::down_cast<ASR::String_t>(ASRUtils::extract_type(type))->m_len, len)){
-                        LCOMPILERS_ASSERT(false);
-                    }
-                    n_data = itr * len;
-                }
-                ASR::expr_t* value = ASRUtils::EXPR(ASR::make_ArrayConstant_t(al, x.base.base.loc, n_data, data,
-                        array_type, ASR::arraystorageType::ColMajor));
-                idl->m_value = value;
-                tmp = (ASR::asr_t*) idl;
-            }
-        }
         idl_nesting_level--;
     }
 
