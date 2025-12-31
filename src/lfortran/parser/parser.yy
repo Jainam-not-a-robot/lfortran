@@ -1759,8 +1759,11 @@ single_line_statement
 
 multi_line_statement
     : multi_line_statement0 { $$ = $1; }
-    | id ":" multi_line_statement0 id { $$ = STMT_NAME($1, $4, $3); }
+    | id ":" multi_line_statement0 id %prec UMINUS {
+          $$ = STMT_NAME($1, $4, $3);
+      }
     ;
+
 
 multi_line_statement0
     : associate_block
@@ -2106,9 +2109,9 @@ do_statement
             $$ = DO2($3, $5, $7, TRIVIA_AFTER($8, @$), $9, @$); }
     | KW_DO comma_opt id "=" expr "," expr "," expr sep statements enddo {
             $$ = DO3($3, $5, $7, $9, TRIVIA_AFTER($10, @$), $11, @$); }
-    | KW_DO TK_INTEGER comma_opt id "=" expr "," expr sep statements enddo_named {
+    | KW_DO TK_INTEGER comma_opt id "=" expr "," expr sep statements enddo {
             $$ = DO2_LABEL(INTEGER3($2), $4, $6, $8, TRIVIA_AFTER($9, @$), $10, @$); }
-    | KW_DO TK_INTEGER comma_opt id "=" expr "," expr "," expr sep statements enddo_named {
+    | KW_DO TK_INTEGER comma_opt id "=" expr "," expr "," expr sep statements enddo {
             $$ = DO3_LABEL(INTEGER3($2), $4, $6, $8, $10, TRIVIA_AFTER($11, @$), $12, @$); }
     | KW_DO comma_opt KW_CONCURRENT "(" concurrent_control_list ")"
         concurrent_locality_star sep statements enddo {
@@ -2203,12 +2206,6 @@ enddo
     | KW_ENDDO { WARN_ENDDO(@$); }
     | TK_LABEL KW_ENDDO {}
     ;
-
-enddo_named
-    : TK_LABEL KW_END_DO id
-    | TK_LABEL KW_ENDDO id
-    ;
-
 
 endforall
     : KW_END_FORALL
