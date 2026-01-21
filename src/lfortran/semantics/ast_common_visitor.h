@@ -13069,7 +13069,7 @@ public:
 
     void visit_DefTOp(ASR::expr_t* first_operand, ASR::expr_t* second_operand, const std::string op, const Location loc) {
         bool is_binary = (second_operand != nullptr);
-
+        std::cout<<"yes"<<std::endl;
         ASR::Struct_t *first_struct = nullptr;
         if (ASR::is_a<ASR::StructType_t>(*ASRUtils::expr_type(first_operand))) {
             first_struct = ASR::down_cast<ASR::Struct_t>(
@@ -13102,6 +13102,16 @@ public:
             diag.add(Diagnostic(
                 "`" + op + "` is not defined or imported",
                 Level::Error, Stage::Semantic, {Label("", {loc})}
+            ));
+            throw SemanticAbort();
+        }
+        if (!ASR::is_a<ASR::CustomOperator_t>(*operator_sym)
+            && !ASR::is_a<ASR::Function_t>(*operator_sym)) {
+            diag.add(Diagnostic(
+                "User operator procedure must be a FUNCTION",
+                Level::Error,
+                Stage::Semantic,
+                { Label("", { loc }) }
             ));
             throw SemanticAbort();
         }
@@ -13193,22 +13203,39 @@ public:
             }
 
             std::string func_name = to_lower(func->m_name);
-            ASR::symbol_t* call_sym = current_scope->resolve_symbol(func_name);
+            ASR::symbol_t* a_name = current_scope->resolve_symbol(func_name);
 
-            if (!call_sym) {
-                ASR::symbol_t* owner = ASRUtils::get_asr_owner(operator_sym);
+            if (!a_name) {
+                ASR::symbol_t* real_proc = ASRUtils::symbol_get_past_external(operator_sym);
+                ASR::symbol_t* owner = ASRUtils::get_asr_owner(real_proc);
                 std::string module_name = owner ? ASRUtils::symbol_name(owner) : "";
-                call_sym = ASR::down_cast<ASR::symbol_t>(
+
+                a_name = ASR::down_cast<ASR::symbol_t>(
                     ASR::make_ExternalSymbol_t(
-                        al, loc, current_scope, s2c(al, func_name),
-                        operator_sym, s2c(al, module_name),
+                        al, real_proc->base.loc, current_scope,
+                        s2c(al, func_name), real_proc, s2c(al, module_name),
                         nullptr, 0, s2c(al, func->m_name),
                         ASR::accessType::Public));
-                current_scope->add_symbol(func_name, call_sym);
+                ADD_ASR_DEPENDENCIES_WITH_NAME(
+                    current_scope, a_name, current_function_dependencies, s2c(al, func_name)
+                );
+
+                current_scope->add_symbol(func_name, a_name);
             }
 
+            if (!a_name) {
+                diag.add(Diagnostic(
+                    "Unable to resolve matched function: `" + func_name
+                    + "` for defined binary operation",
+                    Level::Error,
+                    Stage::Semantic,
+                    { Label("", { loc }) }));
+                throw SemanticAbort();
+            }
+
+
             tmp = ASRUtils::make_FunctionCall_t_util(
-                al, loc, call_sym, nullptr,
+                al, loc, a_name, nullptr,
                 a_args.p, a_args.size(), return_type,
                 nullptr, nullptr, current_scope,
                 current_function_dependencies,
@@ -13236,6 +13263,13 @@ public:
                 proc = gen_proc->m_procs[i];
             }
 
+            if (!ASR::is_a<ASR::Function_t>(*ASRUtils::symbol_get_past_external(proc))) {
+                diag.add(Diagnostic("User operator procedure must be a FUNCTION",
+                                    Level::Error,
+                                    Stage::Semantic,
+                                    { Label("", { loc }) }));
+                throw SemanticAbort();
+            }
             ASR::Function_t* func = ASR::down_cast<ASR::Function_t>(ASRUtils::symbol_get_past_external(proc));
             if ((is_binary && func->n_args != 2) || (!is_binary && func->n_args != 1))
                 continue;
@@ -13301,7 +13335,8 @@ public:
 
         if (!matched) {
             diag.add(Diagnostic(
-                "No matching procedure found in `.def_op.` with compatible argument types",
+                "No matching procedure found for operator `" + op +
+                "` with compatible argument types",
                 Level::Error,
                 Stage::Semantic,
                 { Label("", { loc }) }));
