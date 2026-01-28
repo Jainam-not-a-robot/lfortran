@@ -6078,22 +6078,36 @@ public:
                 }
             }
             if (is_a<ASR::Function_t>(*s)) {
-                // * Function (`fn`)
-                // Deal with case where procedure passed in as argument
-                ASR::Function_t *arg = ASR::down_cast<ASR::Function_t>(s);
-                uint32_t h = get_hash((ASR::asr_t*)arg_sym);
-                std::string arg_s = ASRUtils::symbol_name(arg_sym);
-                llvm_arg.setName(arg_s);
+                // Procedure dummy argument: must have addressable storage
+                ASR::Function_t *iface = ASR::down_cast<ASR::Function_t>(s);
+                ASR::Variable_t *arg = ASR::down_cast<ASR::Variable_t>(arg_sym);
+
+                uint32_t h = get_hash((ASR::asr_t*)arg);
+                llvm_arg.setName(arg->m_name);
+
+                // Build function pointer type
+                ASR::expr_t* arg_expr =
+                    ASRUtils::EXPR(ASR::make_Var_t(
+                        al, arg->base.base.loc, &arg->base));
+
+                llvm::Type* fn_type =
+                    llvm_utils->get_type_from_ttype_t_util(
+                        arg_expr, arg->m_type, module.get());
+
+                // Allocate slot for procedure variable
+                llvm::Value* slot =
+                    llvm_utils->CreateAlloca(fn_type, nullptr, arg->m_name);
+
+                // Store argument value into slot
+                builder->CreateStore(&llvm_arg, slot);
+
+                // Register slot (CRITICAL)
+                llvm_symtab[h] = slot;
+
+                // Optional: keep raw argument for direct calls
                 llvm_symtab_fn_arg[h] = &llvm_arg;
-                if( is_function_variable(arg_sym) ) {
-                    llvm_symtab[h] = &llvm_arg;
-                }
-                if (llvm_symtab_fn.find(h) == llvm_symtab_fn.end()) {
-                    llvm::FunctionType* fntype = llvm_utils->get_function_type(*arg, module.get());
-                    llvm::Function* fn = llvm::Function::Create(fntype, llvm::Function::ExternalLinkage, arg->m_name, module.get());
-                    llvm_symtab_fn[h] = fn;
-                }
             }
+
             asr_arg_idx++;
         }
     }
@@ -6298,6 +6312,57 @@ public:
         builder->SetInsertPoint(BB);
         if (compiler_options.emit_debug_info) debug_emit_loc(x);
         declare_args(x, *F);
+        // Capture host-associated procedure variables
+        if (parent_function && parent_function != &x) {
+            for (auto &item : x.m_symtab->get_scope()) {
+
+                ASR::symbol_t* sym = item.second;
+                if (!ASR::is_a<ASR::Variable_t>(*sym)) continue;
+
+                ASR::Variable_t* var = ASR::down_cast<ASR::Variable_t>(sym);
+
+                // Only host-associated (not local)
+                if (var->m_parent_symtab == x.m_symtab) continue;
+
+                // Only procedure variables
+                if (!ASRUtils::is_symbol_procedure_variable(&var->base)) continue;
+
+                uint32_t h = get_hash((ASR::asr_t*)var);
+
+                // Parent must already have storage
+                if (llvm_symtab.find(h) == llvm_symtab.end()) {
+                    throw CodeGenError(
+                        "Host-associated procedure '" + std::string(var->m_name) +
+                        "' not found in parent LLVM symbol table");
+                }
+
+                llvm::Value* parent_slot = llvm_symtab[h];
+
+                // Build function pointer type
+                ASR::expr_t* var_expr =
+                    ASRUtils::EXPR(ASR::make_Var_t(
+                        al, var->base.base.loc, &var->base));
+
+                llvm::Type* fn_type =
+                    llvm_utils->get_type_from_ttype_t_util(
+                        var_expr, var->m_type, module.get());
+
+                // Allocate local slot in child
+                llvm::Value* local_slot =
+                    llvm_utils->CreateAlloca(fn_type, nullptr, var->m_name);
+
+                // Copy value from parent
+                llvm::Value* fn_val =
+                    llvm_utils->CreateLoad2(fn_type, parent_slot);
+
+                builder->CreateStore(fn_val, local_slot);
+
+                // Register in child symbol table
+                llvm_symtab[h] = local_slot;
+            }
+        }
+
+
         for( auto& sym: x.m_symtab->get_scope() ) {
             if( !ASR::is_a<ASR::Variable_t>(*sym.second) ) {
                 continue ;
@@ -17235,6 +17300,8 @@ public:
 
         ASR::Function_t *s = nullptr;
         std::string self_argument = "";
+        bool is_dummy_proc = false;
+        ASR::Variable_t* proc_var_sym = nullptr;
         if (ASR::is_a<ASR::Function_t>(*proc_sym)) {
             s = ASR::down_cast<ASR::Function_t>(proc_sym);
         } else if (ASR::is_a<ASR::StructMethodDeclaration_t>(*proc_sym)) {
@@ -17247,12 +17314,25 @@ public:
             proc_sym = clss_proc->m_proc;
         } else if (ASR::is_a<ASR::Variable_t>(*proc_sym)) {
             ASR::Variable_t* proc_var = ASR::down_cast<ASR::Variable_t>(proc_sym);
+            proc_var_sym = proc_var;
+            is_dummy_proc = proc_var->m_intent != ASR::intentType::Local;
             ASR::symbol_t *type_decl = proc_var->m_type_declaration;
             if (type_decl == nullptr) {
                 throw CodeGenError("Procedure variable '" + std::string(proc_var->m_name)
                     + "' has no interface. Add explicit interface or ensure it is called somewhere.");
             }
-            s = ASR::down_cast<ASR::Function_t>(type_decl);
+            if (ASR::is_a<ASR::Function_t>(*type_decl)) {
+            ASR::Function_t* iface = ASR::down_cast<ASR::Function_t>(type_decl);
+            ASR::FunctionType_t* ft = ASR::down_cast<ASR::FunctionType_t>(iface->m_function_signature);
+
+            if (ft->m_deftype == ASR::deftypeType::Interface) {
+                // Mark this as procedure-variable indirect call
+                s = iface;   // ONLY for signature
+                // IMPORTANT: do NOT expect llvm_symtab_fn for this
+            } else {
+                s = iface;   // normal function
+            }
+        }
         } else {
             throw CodeGenError("FunctionCall: Symbol type not supported");
         }
@@ -17361,6 +17441,11 @@ public:
         } else {
             throw CodeGenError("ABI type not implemented yet.");
         }
+        ASR::symbol_t* storage_sym = (ASR::symbol_t*)proc_var_sym;
+        uint32_t h_storage = 0;
+        if (proc_var_sym) {
+            h_storage = get_hash((ASR::asr_t*)proc_var_sym);
+        }
         if (llvm_symtab_fn_arg.find(h) != llvm_symtab_fn_arg.end()) {
             // Check if this is a callback function
             llvm::Value* fn = llvm_symtab_fn_arg[h];
@@ -17371,17 +17456,63 @@ public:
             std::string m_name = std::string(((ASR::Function_t*)(&(x.m_name->base)))->m_name);
             args = convert_call_args(x, is_method);
             tmp = builder->CreateCall(fntype, fn, args);
-        } else if (ASRUtils::is_symbol_procedure_variable(ASRUtils::symbol_get_past_external(proc_sym)) && llvm_symtab.find(h) != llvm_symtab.end()) {
-            // This is the case were a function pointer ( procedure variable ) is associated and used
-            llvm::FunctionType* fntype = llvm_utils->get_function_type(*s, module.get());
-            ASR::expr_t* proc_sym_expr = ASRUtils::EXPR(ASR::make_Var_t(al, x.base.base.loc, (ASR::symbol_t*) s));
-            llvm::Type* fn_type = llvm_utils->get_type_from_ttype_t_util(proc_sym_expr,
-                s->m_function_signature, module.get());
-            llvm::Value* fn = llvm_symtab[h];
-            fn = llvm_utils->CreateLoad2(fn_type, fn);
-            args = convert_call_args(x, is_method);
-            tmp = builder->CreateCall(fntype, fn, args);
-        } else if (llvm_symtab_fn.find(h) == llvm_symtab_fn.end()) {
+            } else if (ASRUtils::is_symbol_procedure_variable(
+                        ASRUtils::symbol_get_past_external(proc_sym)) &&
+                    llvm_symtab.find(h_storage) != llvm_symtab.end() &&
+                    !is_dummy_proc) {
+
+                llvm::FunctionType* fntype =
+                    llvm_utils->get_function_type(*s, module.get());
+
+                ASR::expr_t* proc_sym_expr =
+                    ASRUtils::EXPR(ASR::make_Var_t(
+                        al, x.base.base.loc, (ASR::symbol_t*)storage_sym));
+
+                llvm::Type* fn_type =
+                    llvm_utils->get_type_from_ttype_t_util(
+                        proc_sym_expr, s->m_function_signature, module.get());
+
+                llvm::Value* fn = llvm_symtab[h_storage];
+                fn = llvm_utils->CreateLoad2(fn_type, fn);
+
+                args = convert_call_args(x, is_method);
+                tmp = builder->CreateCall(fntype, fn, args);
+            } else if (ASRUtils::is_symbol_procedure_variable(proc_sym)) {
+
+                llvm::FunctionType* fntype =
+                    llvm_utils->get_function_type(*s, module.get());
+
+                ASR::expr_t* proc_expr =
+                    ASRUtils::EXPR(ASR::make_Var_t(
+                        al, x.base.base.loc, (ASR::symbol_t*)storage_sym));
+
+                llvm::Type* fn_type =
+                    llvm_utils->get_type_from_ttype_t_util(
+                        proc_expr, s->m_function_signature, module.get());
+
+                llvm::Value* fn = nullptr;
+
+                // Case 1: true callback argument
+                if (llvm_symtab_fn_arg.find(h_storage) != llvm_symtab_fn_arg.end()) {
+                    fn = llvm_symtab_fn_arg[h_storage];
+                }
+                // Case 2: procedure variable / dummy / host-associated
+                else if (llvm_symtab.find(h_storage) != llvm_symtab.end()) {
+                    llvm::Value* fn_slot = llvm_symtab[h_storage];
+                    fn = llvm_utils->CreateLoad2(fn_type, fn_slot);
+                }
+                else {
+                    throw CodeGenError(
+                        "Procedure variable '" + std::string(proc_var_sym->m_name) +
+                        "' not found in LLVM symbol tables");
+                }
+
+                args = convert_call_args(x, is_method);
+                tmp = builder->CreateCall(fntype, fn, args);
+                return;
+            }
+
+        else if (llvm_symtab_fn.find(h) == llvm_symtab_fn.end()) {
             throw CodeGenError("Function code not generated for '"
                 + std::string(s->m_name) + "'");
         } else {

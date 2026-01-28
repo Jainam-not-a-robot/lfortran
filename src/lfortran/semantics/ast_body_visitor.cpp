@@ -47,7 +47,7 @@ public:
     std::vector<ASR::stmt_t*> omp_region_body={};
     bool is_first_section=false;
     int program_count = 0;
-
+    std::vector<ASR::Function_t*> function_stack;
     BodyVisitor(Allocator &al, ASR::asr_t *unit, diag::Diagnostics &diagnostics,
         CompilerOptions &compiler_options,
         std::map<uint64_t, std::map<std::string, ASR::ttype_t*>> &implicit_mapping,
@@ -3617,11 +3617,9 @@ public:
             std::string subrout_name = to_lower(x.m_name) + "~genericprocedure";
             t = current_scope->get_symbol(subrout_name);
         }
-
         if (x.n_temp_args > 0) {
             t = ASRUtils::symbol_symtab(t)->get_symbol(to_lower(x.m_name));
         }
-
         ASR::Function_t *v = ASR::down_cast<ASR::Function_t>(t);
         current_scope = v->m_symtab;
         for (size_t i=0; i<x.n_decl; i++) {
@@ -3693,9 +3691,11 @@ public:
         starting_m_body = x.m_body;
         starting_n_body = x.n_body;
         collect_labels();
+
         SymbolTable *old_scope = current_scope;
         ASR::symbol_t *t = current_scope->get_symbol(to_lower(x.m_name));
-        if( t->type == ASR::symbolType::GenericProcedure ) {
+
+        if (t->type == ASR::symbolType::GenericProcedure) {
             t = current_scope->get_symbol(to_lower(x.m_name) + "~genericprocedure");
         }
 
@@ -3704,69 +3704,105 @@ public:
         }
 
         ASR::Function_t *v = ASR::down_cast<ASR::Function_t>(t);
+
+        // 🔹 ENTER FUNCTION
+        function_stack.push_back(v);
         current_scope = v->m_symtab;
+
+        // 🔹 HOST-ASSOCIATE procedure dummy arguments
+        if (function_stack.size() >= 2) {
+            ASR::Function_t *host = function_stack[function_stack.size() - 2];
+            SymbolTable *host_scope = host->m_symtab;
+
+            for (auto &it : host_scope->get_scope()) {
+                ASR::symbol_t *sym = it.second;
+
+                if (!ASR::is_a<ASR::Variable_t>(*sym)) continue;
+
+                ASR::Variable_t *var = ASR::down_cast<ASR::Variable_t>(sym);
+
+                if (!ASRUtils::is_symbol_procedure_variable(&var->base)) continue;
+
+                if (current_scope->get_symbol(var->m_name) != nullptr) continue;
+
+                current_scope->add_symbol(var->m_name, sym);
+            }
+        }
+
         if (entry_functions.find(to_lower(v->m_name)) != entry_functions.end()) {
-            /*
-                Subroutine is parent of entry function.
-                For all template functions, create a subroutine call to master function and add it to the body
-                of the subroutine.
-            */
             int label = 1;
             add_subroutine_call(x.base.base.loc, v->m_name, v->m_name, label++, true);
-            for (auto &it: entry_functions[v->m_name]) {
+            for (auto &it : entry_functions[v->m_name]) {
                 add_subroutine_call(x.base.base.loc, it.first, v->m_name, label++, true);
             }
-            // populate master function
-            std::string master_function_name = to_lower(v->m_name) + "_main__lcompilers";
+
+            std::string master_function_name =
+                to_lower(v->m_name) + "_main__lcompilers";
             populate_master_function(x, x.base.base.loc, master_function_name);
 
             current_scope = old_scope;
+            function_stack.pop_back();   // 🔹 EXIT
             tmp = nullptr;
             return;
         }
+
         Vec<ASR::stmt_t*> body;
         body.reserve(al, x.n_body);
+
         auto& scope_data_func2 = data_structure[current_scope->counter];
-        if (scope_data_func2.size()>0) {
-            for(auto it: scope_data_func2) {
+        if (scope_data_func2.size() > 0) {
+            for (auto it : scope_data_func2) {
                 body.push_back(al, it);
             }
         }
         scope_data_func2.clear();
+
         SetChar current_function_dependencies_copy = current_function_dependencies;
         current_function_dependencies.clear(al);
+
         transform_stmts(body, x.n_body, x.m_body);
         handle_format();
+
         SetChar func_deps;
         func_deps.from_pointer_n_copy(al, v->m_dependencies, v->n_dependencies);
-        for( auto& itr: current_function_dependencies ) {
+        for (auto &itr : current_function_dependencies) {
             func_deps.push_back(al, s2c(al, itr));
         }
         current_function_dependencies = current_function_dependencies_copy;
+
         v->m_body = body.p;
         v->n_body = body.size();
         v->m_dependencies = func_deps.p;
         v->n_dependencies = func_deps.size();
 
-        replace_ArrayItem_in_SubroutineCall(al, compiler_options.legacy_array_sections, current_scope);
+        replace_ArrayItem_in_SubroutineCall(
+            al, compiler_options.legacy_array_sections, current_scope
+        );
 
-        for (size_t i=0; i<x.n_contains; i++) {
+        for (size_t i = 0; i < x.n_contains; i++) {
             visit_program_unit(*x.m_contains[i]);
         }
 
-        for (size_t i=0; i<x.n_decl; i++) {
+        for (size_t i = 0; i < x.n_decl; i++) {
             is_Function = true;
-            if(x.m_decl[i]->type == AST::unit_decl2Type::Instantiate)
+            if (x.m_decl[i]->type == AST::unit_decl2Type::Instantiate) {
                 visit_unit_decl2(*x.m_decl[i]);
+            }
             is_Function = false;
         }
 
-        ASRUtils::update_call_args(al, current_scope, compiler_options.implicit_interface, changed_external_function_symbol);
+        ASRUtils::update_call_args(
+            al, current_scope,
+            compiler_options.implicit_interface,
+            changed_external_function_symbol
+        );
 
         starting_m_body = nullptr;
         starting_n_body = 0;
         remove_common_variable_declarations(current_scope);
+
         current_scope = old_scope;
+        function_stack.pop_back();   // 🔹 EXIT
         tmp = nullptr;
     }
 
