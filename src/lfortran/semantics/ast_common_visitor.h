@@ -5185,16 +5185,36 @@ public:
                                         }
                                     } else {
                                         ASR::ttype_t* alias_type = arg_type1;
+                                        if (ASR::is_a<ASR::StructInstanceMember_t>(*asr_eq1) &&
+                                            !ASR::is_a<ASR::StructInstanceMember_t>(*asr_eq2)) {
+                                            std::swap(asr_eq1, asr_eq2);
+                                            std::swap(arg_type1, arg_type2);
+                                        }
+                                        ASR::expr_t* lhs = asr_eq1;
+                                        ASR::expr_t* rhs = asr_eq2;
                                         ASR::ttype_t* pointer_type_ = ASRUtils::TYPE(ASR::make_Pointer_t(
-                                            al, asr_eq2->base.loc, arg_type2));
+                                            al, rhs->base.loc, arg_type2));
                                         ASR::asr_t* get_pointer = ASR::make_GetPointer_t(
-                                            al, asr_eq2->base.loc, asr_eq2, pointer_type_, nullptr);
-                                        ASR::ttype_t *cptr = ASRUtils::TYPE(ASR::make_CPtr_t(al, asr_eq2->base.loc));
+                                            al, rhs->base.loc, rhs, pointer_type_, nullptr);
+                                        ASR::ttype_t *cptr = ASRUtils::TYPE(ASR::make_CPtr_t(al, rhs->base.loc));
                                         ASR::asr_t* pointer_to_cptr = ASR::make_PointerToCPtr_t(
-                                            al, asr_eq2->base.loc, ASRUtils::EXPR(get_pointer), cptr, nullptr);
+                                            al, rhs->base.loc, ASRUtils::EXPR(get_pointer), cptr, nullptr);
+                                        ASR::symbol_t* sym = nullptr;
 
-                                        ASR::Var_t* var = ASR::down_cast<ASR::Var_t>(asr_eq1);
-                                        ASR::Variable_t *var__ = ASR::down_cast<ASR::Variable_t>(var->m_v);
+                                        if (ASR::is_a<ASR::Var_t>(*lhs)) {
+                                            sym = ASR::down_cast<ASR::Var_t>(lhs)->m_v;
+                                        } else if (ASR::is_a<ASR::ExternalSymbol_t>(*lhs)) {
+                                            sym = ASRUtils::symbol_get_past_external(
+                                                    ASR::down_cast<ASR::ExternalSymbol_t>(lhs)->m_external);
+                                        } else {
+                                            diag.add((Diagnostic(
+                                                "Unsupported expression in equivalence",
+                                                Level::Error, Stage::Semantic, {
+                                                    Label("",{x.base.base.loc})
+                                                }
+                                            )));
+                                            throw SemanticAbort();
+                                        }
                                         ASR::ttype_t* type = nullptr;
                                         if (ASR::is_a<ASR::Real_t>(*alias_type)) {
                                             int kind = ASR::down_cast<ASR::Real_t>(alias_type)->m_kind;
@@ -5216,6 +5236,16 @@ public:
                                                 "ignored for now"
                                             );
                                         }
+                                        sym = ASRUtils::symbol_get_past_external(sym);
+                                        if (!ASR::is_a<ASR::Variable_t>(*sym)) {
+                                            diag.add(Diagnostic(
+                                                "Equivalence target must be a variable",
+                                                Level::Error, Stage::Semantic,
+                                                { Label("", {lhs->base.loc}) }
+                                            ));
+                                            throw SemanticAbort();
+                                        }
+                                        ASR::Variable_t* var__ = ASR::down_cast<ASR::Variable_t>(sym);
                                         if (type != nullptr) {
                                             ASR::ttype_t* ptr = ASRUtils::TYPE(ASR::make_Pointer_t(al, asr_eq1->base.loc, type));
                                             var__->m_type = ptr;
