@@ -103,7 +103,7 @@ def convert_type(asdl_type, seq, opt, mod_name):
         type_ = "bool"
         assert not seq
     elif asdl_type == "float":
-        type_ = "double"
+        type_ = "float_union_t"
         assert not seq
     elif asdl_type == "node":
         type_ = "%s_t*" % mod_name
@@ -1101,7 +1101,7 @@ class TreeVisitorVisitor(ASDLVisitor):
                     self.emit('s.append(std::to_string(x.m_%s));' % field.name, 2)
             elif field.type == "float" and not field.seq and not field.opt:
                 self.emit('s.append("\\n" + indtd + "%s" + "%s=");' % (arr, field.name), 2)
-                self.emit('s.append(std::to_string(x.m_%s));' % field.name, 2)
+                self.emit('s.append(std::to_string(x.m_%s.f64));' % field.name, 2)
             elif field.type == "bool" and not field.seq and not field.opt:
                 self.emit('s.append("\\n" + indtd + "%s" + "%s=");' % (arr, field.name), 2)
                 self.emit("if (x.m_%s) {" % field.name, 2)
@@ -1987,7 +1987,7 @@ class PickleVisitorVisitor(ASDLVisitor):
                     else:
                         self.emit('s.append(std::to_string(x.m_%s));' % field.name, 2)
             elif field.type == "float" and not field.seq and not field.opt:
-                self.emit('s.append(std::to_string(x.m_%s));' % field.name, 2)
+                self.emit('s.append(std::to_string(x.m_%s.f64));' % field.name, 2)
             elif field.type == "bool" and not field.seq and not field.opt:
                 self.emit("if (x.m_%s) {" % field.name, 2)
                 self.emit(    's.append(".true.");', 3)
@@ -2263,7 +2263,7 @@ class JsonVisitorVisitor(ASDLVisitor):
                 else:
                     self.emit('s.append(std::to_string(x.m_%s));' % field.name, 2)
             elif field.type == "float" and not field.seq and not field.opt:
-                self.emit('s.append(std::to_string(x.m_%s));' % field.name, 2)
+                self.emit('s.append(std::to_string(x.m_%s.f64));' % field.name, 2)
             elif field.type == "bool" and not field.seq and not field.opt:
                 self.emit("if (x.m_%s) {" % field.name, 2)
                 self.emit(    's.append("true");', 3)
@@ -2455,7 +2455,7 @@ class SerializationVisitorVisitor(ASDLVisitor):
                 self.emit(    'self().write_bool(false);', 3)
                 self.emit("}", 2)
             elif field.type == "float" and not field.seq and not field.opt:
-                self.emit('self().write_float64(x.m_%s);' % field.name, 2)
+                self.emit('self().write_float64(x.m_%s.f64);' % field.name, 2)
             elif field.type == "void":
                 assert True
             elif field.type == "location":
@@ -2697,7 +2697,8 @@ class DeserializationVisitorVisitor(ASDLVisitor):
                         args.append("m_%s" % (f.name))
                     elif f.type == "float":
                         assert not f.opt
-                        lines.append("double m_%s = self().read_float64();" % (f.name))
+                        lines.append("float_union_t m_%s;" % (f.name))
+                        lines.append("m_%s.f64 = self().read_float64();" % (f.name))
                         args.append("m_%s" % (f.name))
                     elif f.type == "bool":
                         assert not f.opt
@@ -2996,8 +2997,38 @@ HEAD = r"""#ifndef LFORTRAN_%(MOD2)s_H
 #include <libasr/asr_scopes.h>
 #include <libasr/string_utils.h>
 
+#include <cstdint>
+#include <cstring>
 
 namespace LCompilers::%(MOD)s {
+
+// Union to store float constants at any precision (single, double, quad)
+union float_union_t {
+    float   f32;      // single precision (kind=4)
+    double  f64;      // double precision (kind=8)
+    uint8_t f128[16]; // quadruple precision (kind=16), stored as raw bytes
+};
+
+// Helper functions to create float_union_t from different precision values
+static inline float_union_t float_union_from_f32(float v) {
+    float_union_t u;
+    std::memset(&u, 0, sizeof(u));
+    u.f32 = v;
+    return u;
+}
+
+static inline float_union_t float_union_from_f64(double v) {
+    float_union_t u;
+    std::memset(&u, 0, sizeof(u));
+    u.f64 = v;
+    return u;
+}
+
+static inline float_union_t float_union_from_f128(const uint8_t bytes[16]) {
+    float_union_t u;
+    std::memcpy(u.f128, bytes, 16);
+    return u;
+}
 
 enum %(mod)sType
 {
