@@ -3587,6 +3587,7 @@ RUN(NAME array_section_27 LABELS gfortran llvm llvm_single_invocation
     EXTRA_ARGS --separate-compilation)
 RUN(NAME array_section_28 LABELS gfortran llvm)
 RUN(NAME array_section_29 LABELS gfortran llvm)
+RUN(NAME array_section_30 LABELS gfortran llvm)
 
 RUN(NAME nested_vars_01 LABELS gfortran llvm llvm_wasm llvm_wasm_emcc llvmStackArray)
 RUN(NAME nested_vars_02 LABELS gfortran llvm)
