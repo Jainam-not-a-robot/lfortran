@@ -1,4 +1,4 @@
-program mre
+program array_section_30
    implicit none
 
    character(len=10) :: lines(4)
@@ -59,4 +59,4 @@ program mre
    if (trim(lines(3)) /= trim(new3)) error stop 15
    if (trim(lines(4)) /= trim(new4)) error stop 16
 
-end program mre
+end program array_section_30
