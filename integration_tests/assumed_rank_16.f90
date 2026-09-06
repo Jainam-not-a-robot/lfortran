@@ -7,7 +7,7 @@ contains
       select rank(a1)
          rank(1)
          select rank(a2)
-            rank(0); call step2(a1)
+            rank(1); call step2(a1)
          end select
       end select
       contains
@@ -27,17 +27,15 @@ subroutine empty()
 end subroutine empty
 
 program assumed_rank_16
-   use m_bug
+   use assumed_rank_16_m
    implicit none
 
    real :: a1(10)
-   real :: a2
+   real :: a2(5)
 
    a1 = 1.0
    a2 = 2.0
 
    call elementcopy_real32(a1, a2)
-
-   error stop "Reached end of main"
-
+   
 end program assumed_rank_16
