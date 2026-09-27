@@ -5431,6 +5431,9 @@ public:
                 if (ASRUtils::is_struct(*elem_t)){
                     llvm::Type *array_type = llvm_utils->get_type_from_ttype_t_util(
                         base_expr, base_t, module.get());
+                    if (tmp->getType() == array_type->getPointerTo()->getPointerTo()) {
+                        tmp = llvm_utils->CreateLoad2(array_type->getPointerTo(), tmp);
+                    }
                     tmp = llvm_utils->create_gep2(array_type, tmp, 0);
                     base_t = elem_t;
                 }

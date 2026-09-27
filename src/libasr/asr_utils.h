@@ -10069,24 +10069,15 @@ static inline ASR::expr_t* struct_base_lending_shape(ASR::ArrayItem_t* x) {
         }
         root = member->m_v;
     }
-    // The chain has to bottom out in a whole array variable. A section or an
-    // element underneath carries an offset and a stride of its own, which the
-    // shape taken from it would not describe.
-    if( !ASR::is_a<ASR::Var_t>(*root) ) {
+    // The chain has to bottom out in a whole array variable or an array section.
+    if( !ASR::is_a<ASR::Var_t>(*root) && !ASR::is_a<ASR::ArraySection_t>(*root) ) {
         return nullptr;
     }
     ASR::ttype_t* root_type = ASRUtils::expr_type(root);
-    if( root_type == nullptr || ASRUtils::is_allocatable(root_type) ||
-        ASR::is_a<ASR::Pointer_t>(*root_type) ||
-        !ASRUtils::is_array(root_type) ) {
+    if( root_type == nullptr || !ASRUtils::is_array(root_type) ) {
         return nullptr;
     }
-    // Only a statically shaped, contiguous base. Anything reached through a
-    // descriptor has neither the shape nor the stride this type would claim.
-    if( ASRUtils::extract_physical_type(root_type) !=
-            ASR::array_physical_typeType::FixedSizeArray ) {
-        return nullptr;
-    }
+    return base;
     return base;
 }
 

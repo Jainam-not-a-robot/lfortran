@@ -691,23 +691,34 @@ bool set_allocation_size(
         }
         case ASR::exprType::ArrayItem: {
             ASR::ArrayItem_t* array_item_t = ASR::down_cast<ASR::ArrayItem_t>(value);
-            allocate_dims.reserve(al, array_item_t->n_args);
-            for( size_t i = 0; i < array_item_t->n_args; i++ ) {
-                ASR::expr_t* start = array_item_t->m_args[i].m_left;
-                ASR::expr_t* end = array_item_t->m_args[i].m_right;
-                ASR::expr_t* step = array_item_t->m_args[i].m_step;
-                if( !(start == nullptr && step == nullptr && end != nullptr) ) {
-                    continue ;
+            if (ASRUtils::is_array_indexed_with_array_indices(array_item_t)) {
+                allocate_dims.reserve(al, array_item_t->n_args);
+                for( size_t i = 0; i < array_item_t->n_args; i++ ) {
+                    ASR::expr_t* start = array_item_t->m_args[i].m_left;
+                    ASR::expr_t* end = array_item_t->m_args[i].m_right;
+                    ASR::expr_t* step = array_item_t->m_args[i].m_step;
+                    if( !(start == nullptr && step == nullptr && end != nullptr) ) {
+                        continue ;
+                    }
+                    if( !ASRUtils::is_array(ASRUtils::expr_type(end)) ) {
+                        continue ;
+                    }
+                    ASR::dimension_t allocate_dim;
+                    allocate_dim.loc = loc;
+                    allocate_dim.m_start = int32_one;
+                    allocate_dim.m_length = ASRUtils::EXPR(ASRUtils::make_ArraySize_t_util(
+                        al, loc, end, nullptr, ASRUtils::expr_type(int32_one), nullptr, false));
+                    allocate_dims.push_back(al, allocate_dim);
                 }
-                if( !ASRUtils::is_array(ASRUtils::expr_type(end)) ) {
-                    continue ;
+            } else if (ASRUtils::struct_base_lending_shape(array_item_t) != nullptr) {
+                bool result = set_allocation_size(al, ASRUtils::struct_base_lending_shape(array_item_t),
+                    temporary_var, allocate_dims, target_n_dims, add_allocated_check, len_allocte_expr);
+                if( ASRUtils::is_character(*ASRUtils::expr_type(value)) ) {
+                    len_allocte_expr = ASRUtils::ASRBuilder(al, loc).StringLen(array_item_t->m_v);
                 }
-                ASR::dimension_t allocate_dim;
-                allocate_dim.loc = loc;
-                allocate_dim.m_start = int32_one;
-                allocate_dim.m_length = ASRUtils::EXPR(ASRUtils::make_ArraySize_t_util(
-                    al, loc, end, nullptr, ASRUtils::expr_type(int32_one), nullptr, false));
-                allocate_dims.push_back(al, allocate_dim);
+                return result;
+            } else {
+                // If it's a scalar element, n_dims = 0, so nothing to allocate.
             }
             if( ASRUtils::is_character(*ASRUtils::expr_type(value)) ) {
                 len_allocte_expr = ASRUtils::ASRBuilder(al, loc).StringLen(array_item_t->m_v);

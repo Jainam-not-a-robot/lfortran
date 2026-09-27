@@ -541,7 +541,11 @@ public:
 
         // Don't go inside these
         void visit_ttype(const ASR::ttype_t &) {}
-        void visit_ArraySection(const ASR::ArraySection_t&) {}
+
+        void visit_ArraySection(const ASR::ArraySection_t& x) {
+            ASR::ArraySection_t *xx = const_cast<ASR::ArraySection_t*>(&x);
+            push_expr_if_array((ASR::expr_t *)xx);
+        }
 
         void visit_ArrayItem(const ASR::ArrayItem_t& x) {
             // An ordinary element selection is a scalar and has no shape to
