@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 module legacy_array_sections_24_sizes
     implicit none
     integer :: n
@@ -48,3 +49,12 @@ program legacy_array_sections_24
     end do
     if (abs(x(5) - 5.0) > 1e-6) error stop
 end program
+=======
+program legacy_array_sections_24
+    use legacy_array_sections_24_m
+    implicit none
+    type(ieee_flag_type) :: flags(2)
+    flags = [ieee_invalid, ieee_overflow]
+    call ieee_set_halting_mode(flags, .false.)
+end program legacy_array_sections_24
+>>>>>>> issue-13894
