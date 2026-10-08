@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 module intrinsics_482_m
   implicit none
   type :: vector_t
@@ -36,3 +37,12 @@ program intrinsics_482
   if (abs(rdot(v) - 6.5) > 1e-6) error stop
   if (abs(mixed(v) - 7.0d0) > 1d-12) error stop
 end program
+=======
+program intrinsics_482
+    implicit none
+    character(len=4) :: a(2)
+    a = repeat("x", 4)
+    a = repeat(" ", 4)
+    if (any(a /= "    ")) error stop
+end program intrinsics_482
+>>>>>>> issue-13972
